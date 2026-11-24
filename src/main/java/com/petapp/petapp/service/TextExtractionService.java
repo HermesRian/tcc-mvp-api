@@ -15,18 +15,31 @@ public class TextExtractionService {
 
     // Padrões de regex para extração
     private static final Pattern PET_TYPE_PATTERN = Pattern.compile(
-        "\\b(gato|gata|cachorro|cachorra|cão|cadela|pássaro|pássara|ave|coelho|coelha|hamster)\\b",
+        "\\b(gato|gata|gatinho|gatinha|cachorro|cachorra|cachorrinho|cachorrinha|cão|cadela|pássaro|pássara|ave|coelho|coelha|hamster|tartaruga|jabuti|cágado)\\b",
         Pattern.CASE_INSENSITIVE
     );
 
-    private static final Pattern STATUS_PATTERN = Pattern.compile(
-        "\\b(desaparecid[oa]|perdid[oa]|sumid[oa]|encontrad[oa]|achad[oa]|resgatad[oa])\\b",
+    // Situação: verbos e particípios de "encontrado" têm prioridade sobre os de "desaparecido",
+    // pois um post de animal encontrado pode dizer "parece perdido".
+    private static final Pattern FOUND_PATTERN = Pattern.compile(
+        "\\b(encontrei|encontrad[oa]|achei|achad[oa]|resgatei|resgatad[oa])\\b",
         Pattern.CASE_INSENSITIVE
     );
 
+    private static final Pattern LOST_PATTERN = Pattern.compile(
+        "\\b(desaparecid[oa]|desapareceu|perdid[oa]|perdi|sumid[oa]|sumiu|fugiu|fugid[oa])\\b",
+        Pattern.CASE_INSENSITIVE
+    );
+
+    // Local: prefixos conhecidos (sem casar "em" dentro de outras palavras, como "ontem")
+    // e corte do trecho em vírgula, ponto ou palavras de ligação.
     private static final Pattern LOCATION_PATTERN = Pattern.compile(
-        "(?:na região d[oa]|no bairro d[oa]|em|próximo [aà]|perto d[oa]|na rua|na avenida)\\s+([^.,;]+)",
-        Pattern.CASE_INSENSITIVE
+        "(?<!\\p{L})(?:"
+            + "na região d[oa]s?|na região|no bairro d[oa]s?|no bairro"
+            + "|em frente (?:a|à|ao)|perto d[oa]s?|perto (?:a|à|ao)|próximo (?:a|à|ao|d[oa]s?)"
+            + "|aqui n[oa](?: bairro)?|n[oa] (?:rua|avenida|av\\.?|praça)|no(?=\\s+centro)|em"
+            + ")\\s+([^.,;]+?)(?=\\s+(?:n[oa]s?|pel[oa]|ontem|hoje|desde|quando|ela|ele)(?!\\p{L})|[.,;]|$)",
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
     );
 
     private static final Pattern DATE_PATTERN = Pattern.compile(
@@ -38,8 +51,13 @@ public class TextExtractionService {
         Pattern.CASE_INSENSITIVE
     );
 
+    private static final String COLOR_WORD =
+        "preto|preta|branco|branca|marrom|cinza|amarelo|amarela|laranja|alaranjad[oa]"
+        + "|tigrad[oa]|malhad[oa]|caramelo|tricolor|bege|dourad[oa]|rajad[oa]";
+
+    // Uma cor, ou duas ligadas por "e" ou "com" (ex.: "preto e branco")
     private static final Pattern COLOR_PATTERN = Pattern.compile(
-        "\\b(preto|preta|branco|branca|marrom|cinza|amarelo|amarela|laranja|tigrado|tigrada|malhado|malhada|caramelo)\\b",
+        "\\b(" + COLOR_WORD + ")(?:\\s+(?:e|com)\\s+(" + COLOR_WORD + ")\\b)?\\b",
         Pattern.CASE_INSENSITIVE
     );
 
@@ -49,7 +67,7 @@ public class TextExtractionService {
     );
 
     private static final Pattern CONTACT_PATTERN = Pattern.compile(
-        "\\b(?:contato|telefone|whatsapp|tel|fone|ligar)[:\\s]*([\\d\\s()-]+)",
+        "\\b(?:contato|telefone|whatsapp|zap|celular|cel|tel|fone|número|numero|ligar|ligue|chamar)(?:\\s+é)?[:\\s]*([\\d\\s()-]+)",
         Pattern.CASE_INSENSITIVE
     );
 
@@ -144,23 +162,19 @@ public class TextExtractionService {
         if (matcher.find()) {
             String type = matcher.group(1).toLowerCase();
             // Normalizar variações
-            if (type.matches("gato|gata")) return "Gato";
-            if (type.matches("cachorro|cachorra|cão|cadela")) return "Cachorro";
+            if (type.matches("gato|gata|gatinho|gatinha")) return "Gato";
+            if (type.matches("cachorro|cachorra|cachorrinho|cachorrinha|cão|cadela")) return "Cachorro";
             if (type.matches("pássaro|pássara|ave")) return "Pássaro";
             if (type.matches("coelho|coelha")) return "Coelho";
             if (type.matches("hamster")) return "Hamster";
+            if (type.matches("tartaruga|jabuti|cágado")) return "Outro";
         }
         return null;
     }
 
     private String extractStatus(String text) {
-        Matcher matcher = STATUS_PATTERN.matcher(text);
-        if (matcher.find()) {
-            String status = matcher.group(1).toLowerCase();
-            // Normalizar variações
-            if (status.matches("desaparecid[oa]|perdid[oa]|sumid[oa]")) return "Desaparecido";
-            if (status.matches("encontrad[oa]|achad[oa]|resgatad[oa]")) return "Encontrado";
-        }
+        if (FOUND_PATTERN.matcher(text).find()) return "Encontrado";
+        if (LOST_PATTERN.matcher(text).find()) return "Desaparecido";
         return null;
     }
 
@@ -210,7 +224,9 @@ public class TextExtractionService {
     private String extractColor(String text) {
         Matcher matcher = COLOR_PATTERN.matcher(text);
         if (matcher.find()) {
-            return matcher.group(1).toLowerCase();
+            String first = matcher.group(1).toLowerCase();
+            String second = matcher.group(2);
+            return second == null ? first : first + " e " + second.toLowerCase();
         }
         return null;
     }

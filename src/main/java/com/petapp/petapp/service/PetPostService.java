@@ -35,8 +35,12 @@ public class PetPostService {
             int skippedCount = 0;
 
             for (FacebookPostDTO postDTO : response.getData()) {
-                if (facebookPostRepository.existsByFacebookPostId(postDTO.getId())) {
-                    log.debug("Post {} already exists, skipping", postDTO.getId());
+                java.util.Optional<FacebookPost> existing =
+                    facebookPostRepository.findByFacebookPostId(postDTO.getId());
+                if (existing.isPresent()) {
+                    // Post ja existe: nao recria, mas renova as URLs de midia (expiram)
+                    refreshMediaUrls(existing.get(), postDTO);
+                    log.debug("Post {} already exists, media URLs refreshed", postDTO.getId());
                     skippedCount++;
                     continue;
                 }
@@ -83,8 +87,11 @@ public class PetPostService {
                 int skippedCount = 0;
 
                 for (FacebookPostDTO postDTO : response.getData()) {
-                    if (facebookPostRepository.existsByFacebookPostId(postDTO.getId())) {
-                        log.debug("Post {} already exists, skipping", postDTO.getId());
+                    java.util.Optional<FacebookPost> existing =
+                        facebookPostRepository.findByFacebookPostId(postDTO.getId());
+                    if (existing.isPresent()) {
+                        refreshMediaUrls(existing.get(), postDTO);
+                        log.debug("Post {} already exists, media URLs refreshed", postDTO.getId());
                         skippedCount++;
                         continue;
                     }
@@ -116,6 +123,45 @@ public class PetPostService {
             log.error("Error during full Facebook posts synchronization", e);
             throw new RuntimeException("Failed to sync all posts from Facebook", e);
         }
+    }
+
+    /**
+     * As URLs de imagem da Graph API sao assinadas e expiram. Para posts ja
+     * salvos, atualiza media/target/url dos anexos com os valores recem-retornados
+     * (anexos casados pela ordem em que a API os devolve).
+     */
+    private void refreshMediaUrls(FacebookPost existing, FacebookPostDTO postDTO) {
+        if (postDTO.getAttachments() == null || postDTO.getAttachments().getData() == null) {
+            return;
+        }
+        List<FacebookAttachmentDTO> fresh = postDTO.getAttachments().getData();
+        List<Attachment> current = existing.getAttachments();
+        for (int i = 0; i < fresh.size() && i < current.size(); i++) {
+            Attachment updated = convertAttachmentToEntity(fresh.get(i));
+            Attachment old = current.get(i);
+            old.setMedia(updated.getMedia());
+            old.setTarget(updated.getTarget());
+            old.setUrl(updated.getUrl());
+        }
+
+        // Posts salvos antes da extracao de texto existir ficam sem PetInfo: preenche agora
+        if (existing.getPetInfo() == null) {
+            String description = null;
+            for (FacebookAttachmentDTO a : fresh) {
+                if (a.getDescription() != null && !a.getDescription().trim().isEmpty()) {
+                    description = a.getDescription();
+                    break;
+                }
+            }
+            if (description != null) {
+                PetInfo petInfo = textExtractionService.extractInformation(description);
+                if (petInfo != null) {
+                    petInfo.setFacebookPost(existing);
+                    existing.setPetInfo(petInfo);
+                }
+            }
+        }
+        facebookPostRepository.save(existing);
     }
 
     private FacebookPost convertToEntity(FacebookPostDTO postDTO) {
